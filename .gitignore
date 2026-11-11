@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# build artifacts (rebuilt with `patsearch build`)
+artifacts/
+results/*.json
+
+# provided dataset (not redistributed; see README for where to put it)
+data/
