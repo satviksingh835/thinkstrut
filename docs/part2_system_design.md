@@ -1,21 +1,5 @@
 # Part 2 — patsearch at 10 million patents: system design
 
-**Audience:** someone new to the project who needs to understand the system and start building it.
-
-**Terms used below.**
-- *Chunk*: a piece of a patent that gets its own vector: the abstract, one claim, or ~250 tokens of
-  description paragraphs. A patent has ~38 chunks.
-- *Best-chunk ranking*: a patent's score for a query is the cosine similarity of its best-matching
-  chunk; that chunk is shown as the evidence.
-- *Hybrid filters*: hard constraints (CPC classification code, keywords in title/abstract, exact
-  title, publication date) combined with the semantic ranking.
-- *Pre-filter vs post-filter*: apply the constraints before vector scoring (only matching patents
-  are scored) or after it (score, then drop non-matches — fast but can return too few results).
-- *ANN*: approximate nearest-neighbour search (e.g. HNSW): finds the closest vectors without
-  comparing against all of them.
-- *recall@10*: share of the exact top-10 results that an approximate method also returns.
-- *Part 1*: the single-machine prototype in this repository (`patsearch/`); its README has details.
-
 **TL;DR.** Keep Part 1's search semantics exactly, swap its single-machine pieces for managed services:
 raw and processed data in **S3**, metadata/text/pipeline state in **Postgres**, keyword + filter +
 vector search in **OpenSearch** (one chunk-level vector index with filtering inside the ANN search,
@@ -67,11 +51,26 @@ as the documented *budget tier* (§7).
 
 ## 3. Architecture
 
-![Architecture: ingestion workers (top row) write to S3, Postgres and OpenSearch (middle row); the query API (bottom row) reads OpenSearch and Postgres](images/architecture.png)
+![Architecture: inside the AWS Cloud boundary, six AWS Batch ingestion jobs write to Amazon S3, Amazon RDS for PostgreSQL and Amazon OpenSearch Service; the Search API on ECS Fargate serves patent examiners from OpenSearch and RDS; EventBridge triggers ingestion and CloudWatch collects metrics](images/architecture.png)
 
-*Top row:* ingestion stages, left to right; gray dashed arrows are hand-offs (each stage enqueues the
-next stage's job in Postgres). *Solid blue:* a stage writes a store; *light-blue dashed:* a stage
-reads its input. *Green:* the query path. *Dotted:* metrics. Generated from
+**Ingestion** (dark arrows). EventBridge starts it weekly; the one-off backfill runs the same stages
+over ~1,000 batches. Each stage is an AWS Batch job that claims its work from the job table in RDS
+and enqueues the next stage when it finishes.
+
+1. **Register**: copy the new USPTO file to S3 `raw/` and create its batch row.
+2. **Parse & chunk**: Part 1's cleaning, claim re-assembly and chunking; output to S3 `processed/`.
+3. **Embed**: GPU Spot instances for the backfill, CPU for weekly files; vectors to S3 `embeddings/`.
+4. **Load**: patent records, claims and chunk text into RDS.
+5. **Index**: bulk-index patents and chunks into OpenSearch.
+6. **Verify**: count checks and canary queries; marks the batch visible to queries.
+
+**Query** (blue arrows).
+
+- **A.** An examiner sends a query with filters to the Search API.
+- **B.** The API embeds the query, resolves keyword filters and runs the filtered ANN search in OpenSearch.
+- **C.** The API fetches titles and evidence text from RDS and returns the ranked patents.
+
+Dashed gray arrows are the schedule trigger and metrics. The diagram is generated from
 [`diagrams/architecture.py`](diagrams/architecture.py) with the
 [`diagrams`](https://diagrams.mingrammer.com) library
 (`uv run --group docs python docs/diagrams/architecture.py`; needs Graphviz).
@@ -81,9 +80,10 @@ reads its input. *Green:* the query path. *Dotted:* metrics. Generated from
 | Object store | S3 | Raw files as received; processed parquet; embeddings per model version | Cheap, durable; lets you rebuild every downstream store without re-parsing or re-embedding |
 | System of record + job queue | Postgres (RDS) | Patents, claims, chunk text, aliases; `batches` / `jobs` / `index_versions` tables | Transactions for idempotent upserts; `SELECT … FOR UPDATE SKIP LOCKED` makes it a job queue — one less service |
 | Search | OpenSearch (managed) with k-NN plugin | `patents` index: title/abstract text, CPC, dates, title keys. `chunks` index: one doc per chunk = vector + copied filter fields | Keyword (BM25), structured filters and ANN in one engine; filters are applied *inside* the ANN search ("efficient filtering"), falling back to exact search when the filtered set is small — the same cost-based choice as Part 1's `choose_path` |
-| Workers | Containers on ECS/AWS Batch; GPU spot for backfill embedding | Run pipeline stages | Stateless; scale to zero between weekly runs |
-| API | Part 1 FastAPI app, on CPU containers | Query embedding (ONNX bge-small), query planning, grouping, hydration | Same response JSON as Part 1, so the UI and CLI work unchanged |
-| Monitoring | CloudWatch / Grafana | Pipeline + query metrics, alerts | §9 |
+| Workers | AWS Batch jobs (containers) on Spot; GPU instances for backfill embedding | Run pipeline stages | Stateless; scale to zero between weekly runs |
+| Scheduler | Amazon EventBridge | Starts the weekly ingestion run | Managed cron; no server to keep alive |
+| API | Part 1 FastAPI app on Amazon ECS (Fargate), CPU only | Query embedding (ONNX bge-small), query planning, grouping, hydration | Same response JSON as Part 1, so the UI and CLI work unchanged |
+| Monitoring | Amazon CloudWatch (optionally Grafana) | Pipeline + query metrics, alarms | §9 |
 
 **Part 1 code reuse.**
 
