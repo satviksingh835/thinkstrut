@@ -3,7 +3,7 @@
 Two implementations with identical semantics:
   * `candidate_doc_ids` — the pre-filter: one SQL query (B-tree indexes + FTS5) -> sorted doc ids.
   * `DocPredicate`      — the naive post-filter used as a benchmark baseline: a Python check run
-                          per ranked candidate.
+                        per ranked candidate.
 
 Keyword semantics: a term matches when its words appear consecutively in the field (case- and
 diacritic-insensitive, no stemming); a trailing '*' makes the last word a prefix ("groove*").
@@ -167,7 +167,7 @@ def filter_sql(cf: CompiledFilter) -> tuple[str, list]:
 
         SELECT doc_id FROM docs
         WHERE ((cpc_subclass >= 'B60B' AND cpc_subclass < 'B60C'))
-          AND doc_id IN (SELECT rowid FROM docs_fts WHERE docs_fts MATCH '{title abstract} : ("bicycle")')
+        AND doc_id IN (SELECT rowid FROM docs_fts WHERE docs_fts MATCH '{title abstract} : ("bicycle")')
         ORDER BY doc_id
 
     The range condition is how a prefix match ("starts with B60B") uses the B-tree index.

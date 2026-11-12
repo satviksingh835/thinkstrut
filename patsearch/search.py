@@ -352,7 +352,7 @@ class SearchEngine:
         )
 
     def _run(self, mode, query, q, cf, k, kinds, exclude, granularity, strategy, path, n_evidence, ev_mode, sw,
-             hydrate, warnings=()):
+            hydrate, warnings=()):
         """Shared second half of search() and claim(): rank with query vector q, then hydrate.
 
         granularity='patent' ranks patents (best chunk each); 'passage' ranks individual chunks.

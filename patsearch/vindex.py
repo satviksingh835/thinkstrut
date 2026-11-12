@@ -6,7 +6,7 @@ Part 3 can drop in an ANN implementation (FAISS IVF/HNSW with ID selectors or pe
 `ExactIndex` is brute force (one matrix-vector product), with three ways to restrict scoring to a
 pre-filtered set of patents — chosen by cost:
   * slices  — the selection is a few contiguous row runs (e.g. one CPC subclass, because doc_ids
-              are ordered by subclass, then date): score zero-copy views of the matrix
+            are ordered by subclass, then date): score zero-copy views of the matrix
   * gather  — scattered selection covering < 50% of rows: copy the selected rows, then score them
   * full    — scattered selection covering most rows: score every row, then keep the selected docs
 Work is proportional to the number of selected rows, so restrictive filters make search faster.

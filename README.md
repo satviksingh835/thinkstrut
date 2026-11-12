@@ -106,8 +106,11 @@ query ─┬─ text ──────── bge query embedding ─┐
 ```
 
 - **Chunks** (`chunk.py`): abstract, each re-assembled claim, and description paragraphs merged to
-  ~250 tokens (split with overlap above 320). Budgets are counted with the model's own tokenizer, so
-  no chunk is silently truncated at the 512-token window (verified at build time: 0 truncated).
+  ~250 tokens (split with overlap above 320). The build uses the model's tokenizer to check each
+  input after adding the title, any parent-claim context, and special tokens. The default model
+  truncates inputs over 512 tokens. The full passage remains visible as evidence, but text past
+  the limit cannot contribute to its semantic search score. The manifest reports the number of
+  over-limit inputs as `chunks_truncated` (0 in the supplied corpus build).
 - **Model**: `BAAI/bge-small-en-v1.5` (384-d, 512 tokens, revision pinned). Small and fast, which
   fits the efficiency track; MiniLM truncates at 256 tokens, larger models were 3–10× slower.
 - **Ranking**: patent score = its best chunk's cosine; evidence = the best chunk of each kind, so long
@@ -194,6 +197,15 @@ Query embedding (bge-small on MPS): **6.0 ms p50**, so a full text query end-to-
   (`VECLIB_MAXIMUM_THREADS=1`, [`results/bench_part1_1thread.md`](results/bench_part1_1thread.md)) it takes
   22.1 ms, i.e. more threads don't help — so fp16/int8 vectors (2–4× less to read) are the next lever,
   together with batching queries into matrix-matrix products.
+
+## Part 2 — system design at 10 M patents
+
+[`docs/part2_system_design.md`](docs/part2_system_design.md): components (S3, Postgres, OpenSearch,
+batch workers, API), the ingestion and query pipelines, a cost breakdown (~$50–200 one-off backfill,
+~$2.5–4 k/month), error handling, status tracking, and the main challenges. Key decision, backed by a
+measurement on this corpus: index every chunk (378 M vectors, 1-bit compressed) rather than one
+summary vector per patent, which missed ~20% of the true top-10 when re-scoring 20 candidates and
+4–8% even with 100 (16% of the corpus).
 
 ## Limitations
 
