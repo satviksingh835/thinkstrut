@@ -81,28 +81,79 @@ retained as a lower-cost configuration (Section 9.3).
 
 ![Architecture: inside the AWS Cloud boundary, six AWS Batch ingestion jobs write to Amazon S3, Amazon RDS for PostgreSQL and Amazon OpenSearch Service; the Search API on ECS Fargate serves patent examiners from OpenSearch and RDS; EventBridge triggers ingestion and CloudWatch collects metrics](images/architecture.png)
 
-**Ingestion (dark arrows).** Amazon EventBridge starts ingestion once a week, and the initial
-backfill runs the same stages over approximately 1,000 batches. Each stage runs as an AWS Batch job,
-claims its work from the job table in PostgreSQL and enqueues the next stage on completion.
+| Element in the diagram | Type | Role in the system |
+|---|---|---|
+| USPTO bulk data (weekly files) | External data source | Publishes new patent applications as weekly bulk files; the only input of the indexing pipeline |
+| AWS Cloud (us-east-1) | Deployment boundary | Encloses every component operated by the system; the data source and the users are external |
+| Amazon EventBridge (weekly trigger) | Scheduler | Starts the indexing pipeline once a week by creating the job for step 1 |
+| Ingestion group: AWS Batch jobs (Spot) | Compute | Runs the six indexing stages as containerised batch jobs on Spot instances |
+| 1 Register | Indexing stage | Copies a new weekly file to S3 and creates a batch record in PostgreSQL |
+| 2 Parse & chunk | Indexing stage | Cleans the records, re-assembles the claims and splits each patent into chunks |
+| 3 Embed (GPU) | Indexing stage | Converts each chunk into a 384-dimensional vector |
+| 4 Load | Indexing stage | Writes patent records, claims and chunk text to PostgreSQL |
+| 5 Index | Indexing stage | Writes patent documents and chunk vectors to the OpenSearch indexes |
+| 6 Verify | Indexing stage | Checks document counts and runs canary queries before the batch becomes searchable |
+| Storage group | Data layer | The three data stores shared by both pipelines: written by the indexing pipeline, read by the search pipeline |
+| Amazon S3 (raw / processed / embeddings) | Object storage | Keeps the raw files, intermediate Parquet files and embeddings, so that any stage can be re-run and the indexes rebuilt |
+| Amazon RDS for PostgreSQL | Relational database | System of record for patent records and text; also holds the job queue and the status of every batch |
+| Amazon OpenSearch Service | Search engine | Holds the `patents` index (keyword search and filters) and the `chunks` index (vectors and filters), and executes searches |
+| Serving group: Amazon ECS on Fargate | Compute | Runs the Search API as serverless containers |
+| Search API (FastAPI) | Application service | Receives queries, converts them into vectors, queries OpenSearch and PostgreSQL, and returns ranked patents |
+| Amazon CloudWatch (metrics & alarms) | Monitoring | Collects metrics from the pipeline and the API, and raises alarms |
+| Patent examiners (web UI / CLI) | Users | Submit searches and review the results |
+| Dark solid arrows, steps 1–6 | Indexing data flow | Movement of data through the indexing stages and into the data stores |
+| Blue arrows, steps A–C | Search data flow | Path of a search request through the system |
+| Dashed arrows | Control and monitoring | Schedule trigger and metrics |
 
-1. **Register:** copies the new USPTO file to `raw/` in S3 and creates a batch record.
-2. **Parse and chunk:** applies the prototype's cleaning, claim re-assembly and chunking, and writes
-   the results to `processed/`.
-3. **Embed:** computes chunk vectors on GPU Spot instances during the backfill and on CPU for weekly
-   files, and writes them to `embeddings/`.
-4. **Load:** writes patent records, claims and chunk text to PostgreSQL.
-5. **Index:** bulk-indexes patents and chunks into OpenSearch.
-6. **Verify:** runs count checks and canary queries, and then makes the batch visible to queries.
+The system consists of two pipelines that share the storage layer: an indexing pipeline, which turns
+weekly USPTO files into searchable indexes, and a search pipeline, which answers queries from patent
+examiners.
 
-**Query processing (blue arrows).**
+#### Indexing pipeline
 
-- **A.** An examiner submits a query with filters to the Search API.
-- **B.** The API embeds the query, resolves keyword filters and runs a filtered ANN search in
-  OpenSearch.
-- **C.** The API retrieves titles and evidence text from PostgreSQL and returns the ranked patents.
+The indexing pipeline runs as six AWS Batch jobs. The jobs coordinate through the job table in
+PostgreSQL: each stage claims a job, processes one batch and then enqueues the job for the next
+stage.
 
-Dashed arrows denote the schedule trigger and metrics. The diagram is generated from
-[`diagrams/architecture.py`](diagrams/architecture.py) with the
+1. **Register.** Once a week, EventBridge triggers the Register stage, which copies the new file
+   from the USPTO to S3 and records a new batch in PostgreSQL.
+2. **Parse and chunk.** The stage reads the raw file, cleans the records, re-assembles the claims and
+   splits each patent into chunks, and writes the result to S3.
+3. **Embed.** The stage converts each chunk into a vector, reuses cached vectors for text that has not
+   changed, and stores the vectors in S3.
+4. **Load.** The stage writes patent records, claims and chunk text to PostgreSQL, which later
+   supplies the text shown in search results.
+5. **Index.** The stage writes the patent documents and chunk vectors to OpenSearch.
+6. **Verify.** The stage checks document counts and runs canary queries. Only after this check
+   succeeds does the batch become visible to searches.
+
+Because every stage reads its input from S3 and writes deterministic output, a failed stage can be
+retried without repeating earlier work. The initial backfill of 10 million patents runs the same
+stages over approximately 1,000 batches. Section 7 describes the stages in detail.
+
+#### Search pipeline
+
+The search pipeline reads the data produced by the indexing pipeline and does not modify it.
+
+- **A. Request.** An examiner submits a text query, a patent number or a claim, together with
+  optional filters, to the Search API.
+- **B. Retrieval.** The API converts the query into a vector, or loads the stored vector of the given
+  patent or claim. It then resolves keyword filters on the `patents` index and runs a filtered ANN
+  search over the `chunks` index in OpenSearch. The best-matching chunk of each patent determines the
+  patent's rank.
+- **C. Result assembly.** The API retrieves titles and evidence text for the top results from
+  PostgreSQL and returns the ranked patents, each with the passages that matched.
+
+Section 8 describes query processing in detail.
+
+#### Interaction between the pipelines
+
+The two pipelines are independent apart from the shared storage layer: the indexing pipeline
+writes, and the search pipeline reads. A new batch becomes searchable only after step 6 marks it as
+verified, so searches never see partially indexed data. Both pipelines report metrics to CloudWatch,
+which raises alarms on failed jobs, ingestion delays and slow queries.
+
+The diagram is generated from [`diagrams/architecture.py`](diagrams/architecture.py) with the
 [`diagrams`](https://diagrams.mingrammer.com) library
 (`uv run --group docs python docs/diagrams/architecture.py`; Graphviz is required).
 
