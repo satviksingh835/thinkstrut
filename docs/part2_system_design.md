@@ -1,7 +1,20 @@
 # Part 2 — patsearch at 10 million patents: system design
 
-**Audience:** an engineer (e.g. an intern) who will build this. Read Part 1's README first; this
-document reuses its vocabulary (chunks, best-chunk ranking, pre-filtering, scoring paths).
+**Audience:** someone new to the project who needs to understand the system and start building it.
+
+**Terms used below.**
+- *Chunk*: a piece of a patent that gets its own vector: the abstract, one claim, or ~250 tokens of
+  description paragraphs. A patent has ~38 chunks.
+- *Best-chunk ranking*: a patent's score for a query is the cosine similarity of its best-matching
+  chunk; that chunk is shown as the evidence.
+- *Hybrid filters*: hard constraints (CPC classification code, keywords in title/abstract, exact
+  title, publication date) combined with the semantic ranking.
+- *Pre-filter vs post-filter*: apply the constraints before vector scoring (only matching patents
+  are scored) or after it (score, then drop non-matches — fast but can return too few results).
+- *ANN*: approximate nearest-neighbour search (e.g. HNSW): finds the closest vectors without
+  comparing against all of them.
+- *recall@10*: share of the exact top-10 results that an approximate method also returns.
+- *Part 1*: the single-machine prototype in this repository (`patsearch/`); its README has details.
 
 **TL;DR.** Keep Part 1's search semantics exactly, swap its single-machine pieces for managed services:
 raw and processed data in **S3**, metadata/text/pipeline state in **Postgres**, keyword + filter +
@@ -54,21 +67,14 @@ as the documented *budget tier* (§7).
 
 ## 3. Architecture
 
-```text
-                    ┌──────────────── ingestion (batch, weekly + one-off backfill) ────────────────┐
- USPTO / provider   │                                                                              │
- weekly files ──► register ──► parse/clean/chunk ──► embed ──► load DB ──► index ──► verify      │
-                    │  (CPU)        (CPU, Part 1 code)   (GPU spot     (CPU)      (CPU)     (canaries)│
-                    │                                     or CPU)                                  │
-                    └──────┬──────────────┬──────────────────┬───────────┬──────────┬──────────────┘
-                           ▼              ▼                  ▼           ▼          ▼
-                    S3 raw/        S3 processed/      S3 embeddings/  Postgres   OpenSearch
-                    (immutable)    (parquet)          (fp16 parquet)  (records,  (patents index:
-                                                                      text, jobs  BM25 + filters;
-                                                                      + status)   chunks index:
-                                                                                  vectors + filters)
- query path:  client ─► API (FastAPI, CPU) ─► embed query (ONNX) ─► OpenSearch ─► Postgres (text) ─► JSON
-```
+![Architecture: ingestion workers (top row) write to S3, Postgres and OpenSearch (middle row); the query API (bottom row) reads OpenSearch and Postgres](images/architecture.png)
+
+*Top row:* ingestion stages, left to right; gray dashed arrows are hand-offs (each stage enqueues the
+next stage's job in Postgres). *Solid blue:* a stage writes a store; *light-blue dashed:* a stage
+reads its input. *Green:* the query path. *Dotted:* metrics. Generated from
+[`diagrams/architecture.py`](diagrams/architecture.py) with the
+[`diagrams`](https://diagrams.mingrammer.com) library
+(`uv run --group docs python docs/diagrams/architecture.py`; needs Graphviz).
 
 | Component | Technology | Role | Why this choice |
 |---|---|---|---|
@@ -324,19 +330,3 @@ re-measure recall); reserved instances; IVF-PQ instead of HNSW; drop the replica
    one early (examiner citations as positives, known-item tests).
 7. **Consistency across S3, Postgres and OpenSearch** without distributed transactions — handled with
    deterministic IDs, idempotent stages, the verified-batch gate and nightly reconciliation.
-
-## 11. How to start (intern plan)
-
-1. **Local stack** (`docker-compose`): Postgres, single-node OpenSearch with the k-NN plugin, MinIO
-   (S3 API). Create the schema above.
-2. **Pipeline skeleton**: the `jobs` table + a worker loop (claim job → run stage → enqueue next).
-   Port Part 1's build steps into `parse`, `embed`, `load`, `index` stage functions that read and write
-   the S3 layout above.
-3. **Query API**: an `OpenSearchIndex` implementing Part 1's `VectorIndex` protocol, plus the filter
-   → OpenSearch DSL translator. Keep the Part 1 response JSON so the web UI works unchanged.
-4. **Equivalence check**: run both engines on the 640-patent sample; top-10 overlap with Part 1
-   should be ≥ 0.95 (differences come only from ANN + quantization). Port Part 1's tests.
-5. **Scale test** on 100 k–1 M patents (the Part 3 large dataset): measure throughput per stage,
-   index memory, latency; tune shards, oversampling, `ef_search`; then size the production cluster
-   from measured numbers instead of the estimates in §7.
-6. **Backfill**, then switch on the weekly schedule, dashboards and alerts.

@@ -226,6 +226,7 @@ tests/       unit + engine tests on a synthetic corpus (HashEmbedder, no downloa
 scripts/     explore_data.py (data profiling)
 bench/       queries.jsonl (fixed benchmark queries)
 results/     bench_part1.md (benchmark report)
+docs/        part2_system_design.md; architecture diagram source (diagrams/architecture.py) and image (images/)
 ```
 
 ## Known bugs
