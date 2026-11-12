@@ -1,0 +1,64 @@
+# Part 2 proof of concept: Postgres job queue + scheduler + 3 workers + status dashboard.
+#   docker compose -f poc/docker-compose.yml up --build      then open http://localhost:8080
+#   docker compose -f poc/docker-compose.yml down -v          stop and delete all data
+name: patsearch-poc
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: poc/Dockerfile
+  environment: &env
+    DATABASE_URL: postgresql://patsearch:patsearch@db:5432/patsearch
+    LAKE_DIR: /lake
+    SOURCE_DIR: /source
+  volumes:
+    - lake:/lake
+    - ../data/patent_data_small:/source:ro
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:                                   # Amazon RDS for PostgreSQL in the design
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: patsearch
+      POSTGRES_PASSWORD: patsearch
+      POSTGRES_DB: patsearch
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U patsearch"]
+      interval: 1s
+      retries: 30
+
+  scheduler:                            # Amazon EventBridge + stage 1 (register)
+    <<: *app
+    command: python -m pipeline.scheduler
+    environment:
+      <<: *env
+      INTERVAL_S: "1"
+      BAD_FILE: "1"
+    restart: "no"
+
+  worker:                               # AWS Batch jobs (stages 2-6)
+    <<: *app
+    command: python -m pipeline.worker
+    environment:
+      <<: *env
+      FAIL_RATE: "0.15"                 # transient errors -> retried with backoff
+      CRASH_RATE: "0.02"                # worker dies mid-job -> reaper re-queues the job
+      STAGE_DELAY_S: "0.6"              # simulated processing time per stage
+      STALE_AFTER_S: "15"
+    deploy:
+      replicas: 3
+    restart: unless-stopped
+
+  dashboard:                            # Amazon CloudWatch dashboard
+    <<: *app
+    command: python -m pipeline.dashboard
+    ports: ["8080:8080"]
+
+volumes:
+  lake:                                 # Amazon S3 in the design

@@ -207,6 +207,16 @@ measurement on this corpus: index every chunk (378 M vectors, 1-bit compressed) 
 summary vector per patent, which missed ~20% of the true top-10 when re-scoring 20 candidates and
 4–8% even with 100 (16% of the corpus).
 
+**Proof of concept** ([`poc/`](poc/README.md)): the ingestion pipeline and job queue of the design,
+running locally with Docker: PostgreSQL job queue (`FOR UPDATE SKIP LOCKED`), a scheduler, three
+worker containers running the six stages with the Part 1 code, and a status dashboard. With injected
+failures, it verified all 64 weekly files, recovered 71 transient errors and 10 worker crashes,
+parked a corrupt file in `needs_review`, and loaded the same 636 patents as Part 1.
+
+```bash
+docker compose -f poc/docker-compose.yml up --build -d   # then open http://localhost:8080
+```
+
 ## Limitations
 
 - Retrieval quality is not formally evaluated (the chosen Part 3 track is efficiency); `bge-small` is a
@@ -227,6 +237,7 @@ scripts/     explore_data.py (data profiling)
 bench/       queries.jsonl (fixed benchmark queries)
 results/     bench_part1.md (benchmark report)
 docs/        part2_system_design.md; architecture diagram source (diagrams/architecture.py) and image (images/)
+poc/         Part 2 proof of concept: docker-compose, schema.sql, pipeline/ (job queue, stages, worker, scheduler, dashboard)
 ```
 
 ## Known bugs
