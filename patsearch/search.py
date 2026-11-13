@@ -128,10 +128,18 @@ class SearchEngine:
     queries reuse vectors stored at build time and never need it.
     """
 
-    def __init__(self, artifact_dir: Path | None = None, embedder: Embedder | None = None, mmap: bool = True):
+    def __init__(self, artifact_dir: Path | None = None, embedder: Embedder | None = None, mmap: bool = True,
+                 ann: bool = True):
         self.store = Store(resolve_artifact_dir(artifact_dir), mmap=mmap)
         s = self.store
-        self.index = ExactIndex(s.emb, s.doc_chunk_lo, s.doc_chunk_hi, s.chunk_kind)
+        self.exact = ExactIndex(s.emb, s.doc_chunk_lo, s.doc_chunk_hi, s.chunk_kind)
+        self.index = self.exact
+        if ann:  # use the HNSW index when the build has one (Part 3); falls back to exact search
+            try:
+                from .ann import AnnIndex
+                self.index = AnnIndex.load(self.exact, self.store.dir) or self.exact
+            except ImportError:
+                pass
         self._embedder = embedder
         self._meta = None
         self._abstract_hash: list[str | None] | None = None
