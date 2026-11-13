@@ -103,6 +103,7 @@ def segment_claims(fragments: list[str]) -> ClaimSet:
     """
     out = ClaimSet()
     pending: list[str] = []  # unnumbered fragments not yet assigned to a claim number
+    carry: list[str] = []  # text that precedes the first numbered claim: joins that claim
     last = 0  # highest claim number accounted for so far
 
     def flush(next_num: int | None) -> None:
@@ -121,8 +122,12 @@ def segment_claims(fragments: list[str]) -> ClaimSet:
             # no numbering gap -> these fragments continue the previous claim
             if out.units:
                 out.units[-1].text = f"{out.units[-1].text} {text}"
-                return
-            lo = hi = 1
+            else:
+                # Nothing to continue yet (text before claim 1, or after a canceled range): it is
+                # the start of the next numbered claim. (Making it its own unit created two units
+                # with the same number, which the large dataset exposed.)
+                carry.append(text)
+            return
         out.units.append(ClaimUnit(lo=lo, hi=hi, text=text))
 
     for frag in fragments:
@@ -146,11 +151,17 @@ def segment_claims(fragments: list[str]) -> ClaimSet:
                 if leftover:  # text after a canceled marker belongs to the next claim(s)
                     pending.append(leftover)
                 continue
-            out.units.append(ClaimUnit(lo=a, hi=b, text=clean_text(rest)))
+            text = clean_text(rest)
+            if carry:
+                text = " ".join(carry + [text]).strip()
+                carry.clear()
+            out.units.append(ClaimUnit(lo=a, hi=b, text=text))
             last = b
         else:  # unnumbered: a sub-element of a claim whose number and preamble were lost upstream
             pending.append(frag)
     flush(None)  # fragments after the last numbered claim -> open-ended block ("claims 14+")
+    if carry:  # carried text that no numbered claim followed (e.g. only canceled claims after it)
+        out.units.append(ClaimUnit(lo=last + 1, hi=None, text=" ".join(carry)))
 
     # second pass: record dependencies now that every unit's number is known
     for u in out.units:

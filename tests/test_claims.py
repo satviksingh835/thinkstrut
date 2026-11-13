@@ -71,3 +71,13 @@ def test_numbered_variants_and_noise():
     cs = segment_claims(["1 .- A hub.", "", None, "2 - 3 . (cancelled)", "4) The hub of claim 1."])
     assert [u.label for u in cs.units] == ["claim 1", "claim 4"]
     assert cs.canceled == [(2, 3)]
+
+
+def test_text_before_first_numbered_claim_joins_it():
+    # regression (large dataset): leading unnumbered text used to become a second "claim 1"
+    cs = segment_claims(["a frame;", "1 . A bicycle comprising the frame.", "2 . The bicycle of claim 1 ."])
+    assert [u.label for u in cs.units] == ["claim 1", "claim 2"]
+    assert cs.units[0].text == "a frame; A bicycle comprising the frame."
+    cs = segment_claims(["a hub;", "1 - 3 . (canceled)", "4 . A wheel."])
+    assert [u.label for u in cs.units] == ["claim 4"] and cs.units[0].text.startswith("a hub;")
+    assert len({u.lo for u in cs.units}) == len(cs.units)
