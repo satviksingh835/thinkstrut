@@ -52,6 +52,7 @@ class SentenceTransformerEmbedder:
         revision: str | None = MODEL_REVISION,
         device: str | None = None,
         query_prefix: str = QUERY_PREFIX,
+        dtype: str = "float32",
     ) -> None:
         os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
         from sentence_transformers import SentenceTransformer
@@ -67,6 +68,10 @@ class SentenceTransformerEmbedder:
         self.max_seq_length = int(self.model.max_seq_length)
         self.query_prefix = query_prefix if "bge" in model_id.lower() else ""
         self.tokenizer = HFTokenizer(self.model.tokenizer)
+        # float16 roughly halves GPU time; on CPU it is slower, so it is only used on MPS/CUDA
+        self.dtype = dtype if self.device in ("mps", "cuda") else "float32"
+        if self.dtype == "float16":
+            self.model.half()
 
     def encode_queries(self, texts: list[str]) -> np.ndarray:
         """For search queries: adds the model's query instruction (see config.QUERY_PREFIX)."""
@@ -90,7 +95,16 @@ class SentenceTransformerEmbedder:
             normalize_embeddings=True,
             show_progress_bar=show_progress,
         )
-        return np.ascontiguousarray(out, dtype=np.float32)
+        out = np.asarray(out, dtype=np.float32)
+        if self.dtype == "float16":
+            bad = ~np.isfinite(out).all(axis=1)
+            if bad.any():  # fp16 overflow is rare; recompute those rows in float32
+                self.model.float()
+                out[bad] = self.model.encode([t for t, b in zip(texts, bad) if b], batch_size=batch_size,
+                                             convert_to_numpy=True, normalize_embeddings=True)
+                self.model.half()
+            out /= np.linalg.norm(out, axis=1, keepdims=True)  # renormalise in float32
+        return np.ascontiguousarray(out)
 
 
 class HashEmbedder:
@@ -125,8 +139,8 @@ class HashEmbedder:
         return np.stack([self._vec(t) for t in texts]).astype(np.float32)
 
 
-def load_embedder(model_id: str = MODEL_ID, device: str | None = None) -> Embedder:
+def load_embedder(model_id: str = MODEL_ID, device: str | None = None, dtype: str = "float32") -> Embedder:
     """'hash-256' -> HashEmbedder (no download, for smoke tests); anything else -> a real model."""
     if model_id.startswith("hash-"):
         return HashEmbedder(int(model_id.split("-", 1)[1]))
-    return SentenceTransformerEmbedder(model_id=model_id, device=device)
+    return SentenceTransformerEmbedder(model_id=model_id, device=device, dtype=dtype)
