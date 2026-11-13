@@ -217,6 +217,28 @@ parked a corrupt file in `needs_review`, and loaded the same 636 patents as Part
 docker compose -f poc/docker-compose.yml up --build -d   # then open http://localhost:8080
 ```
 
+## Part 3 — Efficiency and large data
+
+Chosen enhancement: efficiency and large data, because the Part 1 pipeline would need about 86 hours
+to embed the 471,000-patent sample on this laptop and its exact search slows linearly with the corpus.
+Full report: [`results/part3_efficiency.md`](results/part3_efficiency.md).
+
+- **Ingestion 1.93× faster, 2.6× less memory**: a streaming build (`patsearch build --profile fast`)
+  with a CPU process pool overlapping float16 GPU embedding, deduplication before embedding and
+  resumable shards (lossless: agreement@10 with the baseline 0.995–1.0), plus an optional, measured
+  lossy step that embeds only the first 64 description chunks (agreement@10 0.88–0.94).
+- **Unfiltered search 17.6× faster** at 640k vectors (14.6 ms to 0.83 ms, recall@10 0.985) with a FAISS
+  HNSW index (`patsearch ann-index`) that applies filters inside the graph search; selective filters keep
+  the exact path.
+- Problems found at scale and fixed: duplicate records, dateless filenames, a claim-numbering bug, a
+  torch/faiss OpenMP conflict and memory pressure from unbounded prefetching.
+
+```bash
+uv run patsearch build --profile fast --max-desc-chunks 64 --data-dir data/coding_challenge_data --limit-files 10
+uv run patsearch ann-index
+uv run patsearch search "lithium battery cathode material"
+```
+
 ## Limitations
 
 - Retrieval quality is not formally evaluated (the chosen Part 3 track is efficiency); `bge-small` is a
