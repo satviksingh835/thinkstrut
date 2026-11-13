@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import resource
 import subprocess
 import time
 from pathlib import Path
@@ -52,6 +53,30 @@ STRATEGY_CELLS = [  # (label, strategy, forced path)
     ("post (exhaustive)", "post", "auto"),
     (f"post-top{POST_TOPN}", "post-topN", "auto"),
 ]
+
+
+KEYWORD_CANDIDATES = ["battery", "wireless", "semiconductor", "vehicle", "antibody", "display", "polymer",
+                      "sensor", "neural", "image", "network", "light", "data", "signal"]
+
+
+def scenarios_for(eng: SearchEngine) -> list[tuple[str, FilterSpec]]:
+    """Filter scenarios with a spread of selectivities. The small vehicle set uses the fixed list above;
+    any other corpus gets comparable ones derived from its own data: the largest CPC subclass, the
+    subclass closest to 1% of patents, a keyword in ~5% of titles/abstracts and a combination."""
+    con = eng.store.con
+    subs = con.execute("SELECT cpc_subclass, count(*) FROM docs WHERE cpc_subclass IS NOT NULL "
+                       "GROUP BY cpc_subclass ORDER BY 2 DESC").fetchall()
+    if subs and subs[0][0].startswith("B60"):
+        return SCENARIOS
+    n = eng.n_docs
+    top = subs[0][0]
+    mid = min(subs[1:], key=lambda r: abs(r[1] / n - 0.01))[0]
+    df = {w: len(eng.select(compile_filter(FilterSpec(keywords=[w])))) for w in KEYWORD_CANDIDATES}
+    kw = min(df, key=lambda w: abs(df[w] / n - 0.05))
+    kw2 = min((w for w in df if w != kw), key=lambda w: abs(df[w] / n - 0.10))
+    return [("none", FilterSpec()), (f"cpc={top}", FilterSpec(cpc=[top])), (f"cpc={mid}", FilterSpec(cpc=[mid])),
+            (f"kw={kw}", FilterSpec(keywords=[kw])),
+            (f"cpc={top} & kw={kw2}", FilterSpec(cpc=[top], keywords=[kw2]))]
 
 
 def _pct(xs, p):
@@ -104,16 +129,16 @@ def _query_vectors(eng: SearchEngine, queries: list[dict], reps: int, log) -> tu
     return stats, vecs
 
 
-def bench_real(eng: SearchEngine, vecs: list[np.ndarray], reps: int, warmup: int, log) -> list[dict]:
+def bench_real(eng: SearchEngine, vecs: list[np.ndarray], reps: int, warmup: int, log, scenarios=SCENARIOS) -> list[dict]:
     """Time rank_docs() for every scenario x strategy on the real index, and check result quality:
     recall@k = share of the exact pre-filter top-k that the strategy also returned."""
     rows = []
-    for name, spec in SCENARIOS:
+    for name, spec in scenarios:
         cf = compile_filter(spec)
         ids = eng.select(cf)
         n_c, sd, sr = eng._selectivity(ids)
         # reference answers: the exact pre-filter top-k for every query
-        pre_ref = [eng.rank_docs(v, cf, K, None, [], "pre", "auto", Stopwatch())[0].tolist() for v in vecs]
+        pre_ref = [eng.rank_docs(v, cf, K, None, [], "pre", "full", Stopwatch())[0].tolist() for v in vecs]  # exact
         cells = STRATEGY_CELLS if not cf.is_empty else STRATEGY_CELLS[:1]
         for label, strategy, path in cells:
             for i in range(warmup):
@@ -150,10 +175,10 @@ def bench_real(eng: SearchEngine, vecs: list[np.ndarray], reps: int, warmup: int
     return rows
 
 
-def bench_similar(eng: SearchEngine, docs: list[str], reps: int, warmup: int, log) -> list[dict]:
+def bench_similar(eng: SearchEngine, docs: list[str], reps: int, warmup: int, log, scenarios=SCENARIOS) -> list[dict]:
     """Time patent -> similar (stage 1 + stage 2) with and without filters."""
     out = []
-    for name, spec in [s for s in SCENARIOS if s[0] in ("none", "cpc=B60B", "cpc=B60D", "kw=bicycle")]:
+    for name, spec in scenarios[:4]:
         for i in range(warmup):
             eng.similar(docs[i % len(docs)], spec, k=K, hydrate=False)
         totals, s1, s2 = [], [], []
@@ -169,10 +194,10 @@ def bench_similar(eng: SearchEngine, docs: list[str], reps: int, warmup: int, lo
     return out
 
 
-def bench_end_to_end(eng: SearchEngine, queries: list[dict], reps: int, log) -> list[dict]:
+def bench_end_to_end(eng: SearchEngine, queries: list[dict], reps: int, log, spec: FilterSpec | None = None) -> list[dict]:
     """What a user of the CLI/API sees per call (model already loaded), incl. embedding + hydration."""
     by_type = {
-        "text": [lambda q=q: eng.search(q["text"], FilterSpec(cpc=["B60C"]), k=K) for q in queries if q["type"] == "text"],
+        "text": [lambda q=q: eng.search(q["text"], spec, k=K) for q in queries if q["type"] == "text"],
         "claim (by ref)": [lambda q=q: eng.claim(q["ref"], k=K) for q in queries if q["type"] == "claim"],
         "similar": [lambda q=q: eng.similar(q["doc"], k=K) for q in queries if q["type"] == "similar"],
     }
@@ -374,18 +399,20 @@ def write_report(res: dict, out_md: Path) -> None:
     out_md.write_text("\n".join(parts) + "\n")
 
 
-def run_benchmark(index_dir=None, reps=200, warmup=5, synthetic_sizes=(), out_md=Path("results/bench_part1.md"), log=print):
+def run_benchmark(index_dir=None, reps=200, warmup=5, synthetic_sizes=(), out_md=Path("results/bench_part1.md"), log=print,
+                  queries_file: Path = QUERIES_FILE):
     """Entry point of `patsearch bench`: run every section, write the .md report and a .json dump."""
     eng = SearchEngine(index_dir, mmap=False)  # matrix in RAM: measure compute, not page faults
-    queries = load_queries()
+    queries = load_queries(Path(queries_file))
+    scenarios = scenarios_for(eng)
     log(f"[bold]benchmark[/bold] on {eng.store.dir.name}: {eng.n_docs} docs, {eng.index.n_rows:,} rows")
     emb_stats, vecs = _query_vectors(eng, queries, reps, log)
     log("retrieval on the real index:")
-    real = bench_real(eng, vecs, reps, warmup, log)
+    real = bench_real(eng, vecs, reps, warmup, log, scenarios)
     log("patent -> similar:")
-    sim = bench_similar(eng, [q["doc"] for q in queries if q["type"] == "similar"], reps, warmup, log)
+    sim = bench_similar(eng, [q["doc"] for q in queries if q["type"] == "similar"], reps, warmup, log, scenarios)
     log("end-to-end:")
-    e2e = bench_end_to_end(eng, queries, reps, log)
+    e2e = bench_end_to_end(eng, queries, reps, log, scenarios[1][1])
     synth = bench_synthetic(eng, list(synthetic_sizes), max(20, reps // 5), 3, log) if synthetic_sizes else []
     man = eng.store.manifest
     res = {
@@ -400,6 +427,9 @@ def run_benchmark(index_dir=None, reps=200, warmup=5, synthetic_sizes=(), out_md
             "veclib_threads": os.environ.get("VECLIB_MAXIMUM_THREADS", "default"),
             "reps": reps,
             "warmup": warmup,
+            "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6),  # bytes on macOS
+            "index_mb": round(sum(f.stat().st_size for f in eng.store.dir.iterdir()) / 1e6, 1),
+            "scenarios": [name for name, _ in scenarios],
         },
         "embedding": emb_stats,
         "real": real,

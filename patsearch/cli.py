@@ -170,24 +170,37 @@ def main() -> None:
 @click.option("--out", "artifacts_root", type=click.Path(path_type=Path), default=DEFAULT_ARTIFACTS_DIR, show_default=True)
 @click.option("--model", "model_id", default=MODEL_ID, show_default=True, help="sentence-transformers model id (or hash-256 for a model-free smoke test).")
 @click.option("--device", default=None, help="mps / cuda / cpu (default: auto).")
-@click.option("--batch-size", default=64, show_default=True)
+@click.option("--batch-size", type=int, default=None, help="Embedding batch size (default 64; larger was slower on MPS).")
 @click.option("--limit-files", type=int, default=None, help="Only ingest the first N JSON files.")
+@click.option("--profile", type=click.Choice(["fast", "baseline"]), default="fast", show_default=True,
+              help="fast = Part 3 streaming build; baseline = the original Part 1 build.")
+@click.option("--dtype", type=click.Choice(["float16", "float32"]), default="float16", show_default=True,
+              help="Embedding precision on MPS/CUDA (fast profile).")
+@click.option("--workers", type=int, default=6, show_default=True, help="CPU worker processes (fast profile).")
+@click.option("--max-desc-chunks", type=int, default=None,
+              help="Lossy: index only the first N description chunks per patent (fast profile).")
 @handle_errors
-def build(data_dir, artifacts_root, model_id, device, batch_size, limit_files):
+def build(data_dir, artifacts_root, model_id, device, batch_size, limit_files, profile, dtype, workers, max_desc_chunks):
     """Ingest the JSON files and build the index (SQLite + embeddings)."""
-    from .build import build_index  # imported here so search commands don't load the build code
+    log = lambda s: console.print(f"[dim]{s}[/dim]")  # noqa: E731
+    if profile == "baseline":
+        from .build import build_index  # imported here so search commands don't load the build code
 
-    out_dir, m = build_index(
-        data_dir, artifacts_root, model_id=model_id, device=device, batch_size=batch_size,
-        limit_files=limit_files, log=lambda s: console.print(f"[dim]{s}[/dim]"),
-    )
+        out_dir, m = build_index(data_dir, artifacts_root, model_id=model_id, device=device,
+                                 batch_size=batch_size or 64, limit_files=limit_files, log=log)
+    else:
+        from .fastbuild import fast_build
+
+        out_dir, m = fast_build(data_dir, artifacts_root, model_id=model_id, device=device, dtype=dtype,
+                                batch_size=batch_size or 64, workers=workers, max_desc_chunks=max_desc_chunks,
+                                limit_files=limit_files, log=log)
     c = m["counts"]
     console.print(f"[bold green]built[/bold green] {out_dir}")
     console.print(
         f"docs {c['docs']} (aliases {c['aliases']}, without description {c['docs_without_description']}), "
         f"chunks {c['chunks']} {c['chunks_by_kind']}, truncated {c['chunks_truncated']}"
     )
-    console.print(f"claim units {c['claim_units']}, canceled claims {c['claims_canceled']}")
+    console.print(f"claim units {c['claim_units']}, canceled claims {c.get('claims_canceled', 'n/a')}")
     console.print("stage timings (ms): " + ", ".join(f"{k} {v:.0f}" for k, v in m["timings_ms"].items()))
     console.print(f"throughput: {m['throughput']}")
 
@@ -275,19 +288,42 @@ def show(doc_number, index_dir, show_chunks):
             console.print(f"  #{r['chunk_id']} {r['label']} ({r['n']} chars)")
 
 
+@main.command("ann-index")
+@click.option("--index", "index_dir", type=click.Path(path_type=Path), default=None)
+@click.option("--m", default=32, show_default=True, help="HNSW graph degree.")
+@click.option("--ef-construction", default=80, show_default=True)
+@click.option("--sq8", is_flag=True, help="Store 8-bit quantised vectors in the graph (4x less memory).")
+@handle_errors
+def ann_index(index_dir, m, ef_construction, sq8):
+    """Build the HNSW (ANN) index for a built index; search then uses it for broad queries."""
+    import time
+
+    from .ann import build_ann
+    from .store import resolve_artifact_dir
+
+    t = time.time()
+    path = build_ann(resolve_artifact_dir(index_dir), m=m, ef_construction=ef_construction, sq8=sq8)
+    console.print(f"[bold green]built[/bold green] {path} ({path.stat().st_size / 1e6:.0f} MB) in {time.time() - t:.1f} s")
+
+
 @main.command()
 @click.option("--index", "index_dir", type=click.Path(path_type=Path), default=None)
 @click.option("--reps", default=200, show_default=True)
 @click.option("--warmup", default=5, show_default=True)
 @click.option("--synthetic", default="", help="Comma-separated synthetic corpus sizes in chunk rows, e.g. 100000,1000000.")
 @click.option("--out", "out_md", type=click.Path(path_type=Path), default=Path("results/bench_part1.md"), show_default=True)
+@click.option("--queries", "queries_file", type=click.Path(path_type=Path, exists=True), default=None,
+              help="Benchmark query file (default: bench/queries.jsonl).")
 @handle_errors
-def bench(index_dir, reps, warmup, synthetic, out_md):
+def bench(index_dir, reps, warmup, synthetic, out_md, queries_file):
     """Time search with vs without hybrid filters (writes a markdown report)."""
     from .bench import run_benchmark
 
     sizes = [int(x) for x in synthetic.split(",") if x.strip()]
-    run_benchmark(index_dir, reps=reps, warmup=warmup, synthetic_sizes=sizes, out_md=out_md, log=console.print)
+    from .bench import QUERIES_FILE
+
+    run_benchmark(index_dir, reps=reps, warmup=warmup, synthetic_sizes=sizes, out_md=out_md, log=console.print,
+                  queries_file=queries_file or QUERIES_FILE)
 
 
 @main.command()
