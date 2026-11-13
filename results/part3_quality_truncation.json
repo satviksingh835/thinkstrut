@@ -1,0 +1,47 @@
+{
+  "ref": "artifacts/large_5k_baseline",
+  "n_docs": 4999,
+  "n_rows": 444820,
+  "rows": [
+    {
+      "config": "first 8 description chunks",
+      "agreement@10 claim 1": 0.667,
+      "agreement@10 abstract": 0.618,
+      "known-item recall@10": 0.9,
+      "known-item MRR": 0.838,
+      "known-item recall@10 (reference)": 1.0,
+      "agreement@10 text": 0.59,
+      "share of text embedded": 0.218
+    },
+    {
+      "config": "first 16 description chunks",
+      "agreement@10 claim 1": 0.728,
+      "agreement@10 abstract": 0.692,
+      "known-item recall@10": 0.892,
+      "known-item MRR": 0.833,
+      "known-item recall@10 (reference)": 1.0,
+      "agreement@10 text": 0.67,
+      "share of text embedded": 0.324
+    },
+    {
+      "config": "first 32 description chunks",
+      "agreement@10 claim 1": 0.809,
+      "agreement@10 abstract": 0.789,
+      "known-item recall@10": 0.915,
+      "known-item MRR": 0.854,
+      "known-item recall@10 (reference)": 1.0,
+      "agreement@10 text": 0.82,
+      "share of text embedded": 0.497
+    },
+    {
+      "config": "first 64 description chunks",
+      "agreement@10 claim 1": 0.895,
+      "agreement@10 abstract": 0.884,
+      "known-item recall@10": 0.985,
+      "known-item MRR": 0.949,
+      "known-item recall@10 (reference)": 1.0,
+      "agreement@10 text": 0.94,
+      "share of text embedded": 0.702
+    }
+  ]
+}

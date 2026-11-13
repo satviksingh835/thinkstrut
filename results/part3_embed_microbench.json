@@ -1,0 +1,41 @@
+{
+  "n_texts": 10000,
+  "results": [
+    {
+      "dtype": "float32",
+      "batch_size": 64,
+      "seconds": 68.4,
+      "tokens_per_s": 27104,
+      "speedup_vs_fp32_b64": 1.0,
+      "cosine_vs_fp32_min": 1.0,
+      "cosine_vs_fp32_mean": 1.0
+    },
+    {
+      "dtype": "float16",
+      "batch_size": 64,
+      "seconds": 57.2,
+      "tokens_per_s": 32378,
+      "speedup_vs_fp32_b64": 1.19,
+      "cosine_vs_fp32_min": 1.0,
+      "cosine_vs_fp32_mean": 1.0
+    },
+    {
+      "dtype": "float16",
+      "batch_size": 128,
+      "seconds": 67.6,
+      "tokens_per_s": 27401,
+      "speedup_vs_fp32_b64": 1.01,
+      "cosine_vs_fp32_min": 1.0,
+      "cosine_vs_fp32_mean": 1.0
+    },
+    {
+      "dtype": "float16",
+      "batch_size": 256,
+      "seconds": 69.7,
+      "tokens_per_s": 26575,
+      "speedup_vs_fp32_b64": 0.98,
+      "cosine_vs_fp32_min": 1.0,
+      "cosine_vs_fp32_mean": 1.0
+    }
+  ]
+}

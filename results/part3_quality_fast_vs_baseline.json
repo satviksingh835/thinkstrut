@@ -1,0 +1,16 @@
+{
+  "ref": "artifacts/large_5k_baseline",
+  "n_docs": 4999,
+  "n_rows": 444820,
+  "rows": [
+    {
+      "config": "candidate artifacts/large_5k_fast",
+      "agreement@10 claim 1": 0.995,
+      "agreement@10 abstract": 0.997,
+      "known-item recall@10": 1.0,
+      "known-item MRR": 1.0,
+      "known-item recall@10 (reference)": 1.0,
+      "agreement@10 text": 1.0
+    }
+  ]
+}

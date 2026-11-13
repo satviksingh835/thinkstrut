@@ -6,7 +6,7 @@ __pycache__/
 
 # build artifacts (rebuilt with `patsearch build`)
 artifacts/
-results/*.json
+results/*.log
 
 # provided dataset (not redistributed; see README for where to put it)
 data/
