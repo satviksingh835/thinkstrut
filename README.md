@@ -1,7 +1,6 @@
 # Patent Search Engine
 
-`patsearch` is a hybrid semantic search engine for US patent applications. It was built for the
-Thinkstruct coding task. It ranks patents by the meaning of a query and returns the claim or
+`patsearch` is a hybrid semantic search engine for US patent applications. It ranks patents by the meaning of a query and returns the claim or
 paragraph that matched. Searches can be restricted by classification code, keyword, title and date.
 Part 3 extends the engine to the large data sample.
 
