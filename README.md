@@ -10,7 +10,7 @@ Part 3 extends the engine to the large data sample.
 | [TECHNICAL.md](TECHNICAL.md) | Technical details for each part: data handling, design, and measurements |
 | [docs/part2_system_design.md](docs/part2_system_design.md) | Part 2: system design for 10 million patents |
 | [poc/README.md](poc/README.md) | Part 2: proof of concept |
-| [results/part3_efficiency.md](results/part3_efficiency.md) | Part 3: efficiency report |
+| [TECHNICAL.md, Part 3](TECHNICAL.md#part-3-efficiency-and-large-data) | Part 3: efficiency measurements and results |
 
 Video walkthrough of Parts 2 and 3: *link to be added*.
 
@@ -193,9 +193,9 @@ The filter options are:
 
 ### Part 3
 
-The commands below reproduce every result in
-[results/part3_efficiency.md](results/part3_efficiency.md). The builds take 40–60 minutes each on an
-Apple M4. To also record peak memory, prefix a build with `/usr/bin/time -l`.
+The commands below reproduce every Part 3 result in
+[TECHNICAL.md](TECHNICAL.md#part-3-efficiency-and-large-data). The builds take 40–60 minutes each on
+an Apple M4. To also record peak memory, prefix a build with `/usr/bin/time -l`.
 
 ```bash
 # 1. Baseline: Part 1 build on the first 5 files (5,000 patents), and its search benchmark

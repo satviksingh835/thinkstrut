@@ -319,7 +319,12 @@ The proof of concept simplifies the design in four ways:
 
 ## Part 3: Efficiency and Large Data
 
-The full report is in [results/part3_efficiency.md](results/part3_efficiency.md).
+| Measure | Baseline (Part 1 code) | Final configuration |
+|---|---|---|
+| Ingestion rate | 1.52 patents/s | 2.92 patents/s (1.93×) |
+| Peak memory during the build | 5.81 GB (5,000 patents) | 2.43 GB (10,000 patents) |
+| Unfiltered search | 9.6 ms (445,000 vectors, exact) | 0.83 ms (640,000 vectors, HNSW) |
+| Quality relative to the baseline | Reference | Lossless changes: agreement@10 0.995–1.0; description limit: 0.88–0.94; HNSW: recall@10 0.985 |
 
 ### 3.1 Large Data Sample
 
@@ -460,7 +465,6 @@ disk space. The next steps follow the Part 2 design:
 
 | File | Content | Produced by |
 |---|---|---|
-| `results/part3_efficiency.md` | Part 3 report | Written from the files below |
 | `results/part3_baseline_search.md`, `.json` | Exact search on the 5,000-patent baseline | `patsearch bench` before `ann-index` |
 | `results/part3_ann_search.md`, `.json` | HNSW search on the same index | `patsearch bench` after `ann-index` |
 | `results/part3_final_search.md`, `.json` | HNSW search on the 10,000-patent final index | `patsearch bench` |
