@@ -87,3 +87,29 @@ def test_dedupe_keeps_earliest_publication_and_records_alias():
     assert sorted(p.doc_number for p in kept) == ["20240000001", "20240000002"]
     assert alias == {"20240000009": "20240000001"}
     assert next(p for p in kept if p.doc_number == "20240000001").aliases == ["20240000009"]
+
+
+def test_large_dataset_filename_without_date():
+    p = coerce_record(_rec(filename="US20240000148A1.XML"), "patents_batch_0001.json", LoadStats())
+    assert p.kind == "A1" and p.pub_date is None
+
+
+def test_list_data_files_nested_large_layout(tmp_path):
+    from patsearch.load import list_data_files
+
+    for job in ("job_000", "job_001"):
+        (tmp_path / job).mkdir()
+        for i in (2, 1):
+            (tmp_path / job / f"patents_batch_000{i}.json").write_text("[]")
+    (tmp_path / "sample.json").write_text("{}")
+    names = [f"{p.parent.name}/{p.name}" for p in list_data_files(tmp_path)]
+    assert names == ["job_000/patents_batch_0001.json", "job_000/patents_batch_0002.json",
+                     "job_001/patents_batch_0001.json", "job_001/patents_batch_0002.json"]
+
+
+def test_dedupe_repeated_doc_number_keeps_first():
+    st = LoadStats()
+    first = coerce_record(_rec(), "a.json", st)
+    again = coerce_record(_rec(abstract="A re-scraped copy with different text."), "b.json", st)
+    kept, alias = dedupe([first, again], st)
+    assert [p.abstract for p in kept] == ["A tire."] and alias == {} and st.duplicate_doc_numbers == 1

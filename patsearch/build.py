@@ -67,7 +67,7 @@ def build_index(
 
     # 2. dedupe byte-identical publications ------------------------------------------------
     with sw.stage("dedupe"):
-        patents, alias_map = dedupe(patents)
+        patents, alias_map = dedupe(patents, stats)
 
     # 3. parse CPC + segment claims -----------------------------------------------------------
     with sw.stage("parse"):
