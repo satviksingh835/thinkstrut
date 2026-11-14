@@ -10,3 +10,6 @@ results/*.log
 
 # provided dataset (not redistributed; see README for where to put it)
 data/
+
+# task description (kept locally, not published)
+thinkstruct-coding-task.pdf
