@@ -12,7 +12,7 @@ Part 3 extends the engine to the large data sample.
 | [poc/README.md](poc/README.md) | Part 2: proof of concept |
 | [TECHNICAL.md, Part 3](TECHNICAL.md#part-3-efficiency-and-large-data) | Part 3: efficiency measurements and results |
 
-Video walkthrough of Parts 2 and 3: *link to be added*.
+Video walkthrough of Parts 2 and 3: [video.mp4](video.mp4) (3 minutes).
 
 ## Problem Statement
 
